@@ -1,0 +1,87 @@
+---
+title: "Practical Machine Learning Project"
+author: "Josh"
+date: "02/22/2015"
+output: html_document
+---
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+Given the provided data, we want to be able to predict which class of excercise participants do from the various data points collected by the devices.
+
+First, we'll load the required libraries and import the data.
+
+```{r, message=FALSE}
+# load libraries
+library(caret);
+library(rpart);
+library(randomForest);
+
+# set seed
+set.seed(12345)
+
+# load training data set
+training_data_full <- read.csv('pml-training.csv', na.strings=c('', 'NA', 'NULL', '#DIV/0!'))
+```
+
+Then we'll split the full training set data into training and testing subsets. This allows us to do cross-validation without having to use the testing data. We'll use 75% of the training data as actual training data and the other 25% as testing data.
+
+```{r, message=FALSE}
+# split into training / testing sets
+in_training <- createDataPartition(y=training_data_full$classe, p = 0.75, list=FALSE)
+training_data <- training_data_full[in_training,]
+testing_data <- training_data_full[-in_training,]
+```
+
+Now that the data is loaded, we can do some exploratory data analysis using R. We see that the provided data has 160 variables. Many of these variables have many missing values.
+
+```{r, message=FALSE, results='hide'}
+dim(training_data)
+summary(training_data);
+```
+
+We need to clean up the provided data before training a model. First we'll remove the first 7 variables of the data. These columns relate to the user doing the excercise or the time of the excercise. This is not relevant to the problem at hand. Then we'll remove variables that have a high number of missing values. This will help reduce the number of variables our final model will need to consider. We remove these variables from both the training and testing data sets so that we can predict values later on.
+
+```{r, message=FALSE}
+# remove X, name, timestamp, and window columns
+training_data <- training_data[,-(1:7)]
+testing_data <- testing_data[,-(1:7)]
+
+# remove variables with high # NA
+na_counts <- colSums(is.na(training_data))
+training_data <- training_data[,na_counts < length(training_data[0,]) / 2]
+testing_data <- testing_data[,na_counts < length(training_data[0,]) / 2]
+```
+
+The above reduced the number of variables from 160 to 53. This is better, but 53 is still a large number of variables. Some of these variables may be highly correlated to one another. We can use R to determine highly correlated variables and remove one variable from each correlated variable pair.
+
+```{r, message=FALSE}
+# full rows
+training_data_non_na <- training_data[complete.cases(training_data),]
+
+# find correlated variables
+correlation_matrix <- cor(training_data_non_na[sapply(training_data_non_na, is.numeric)])
+correlated_columns <- findCorrelation(correlation_matrix, cutoff = 0.5)
+
+# remove correlated columns
+training_data_cleaned <- training_data[,-correlated_columns]
+testing_data_cleaned <- testing_data[,-correlated_columns]
+```
+
+Removing correlated variables gets us down to 22 variables, a much more manageable number. Now we can train a model based on the remaining variables. We'll first try a decision tree model.
+
+```{r, cache=TRUE}
+model_rpart <- train(classe ~ ., method='rpart', data = training_data_cleaned)
+predictions_rpart <- predict(model_rpart, testing_data_cleaned)
+table(predictions_rpart, testing_data_cleaned$classe)
+```
+
+From the confusion matrix above, we can calculate that the decision tree model has an accuracy of 53%. This is better than randomly selecting a class, but we can probably do better. We'll now try a random forests model.
+
+```{r, cache=TRUE}
+model_rf <- randomForest(formula = classe ~ ., data = training_data_cleaned)
+predictions_rf <- predict(model_rf, testing_data_cleaned)
+table(predictions_rf, testing_data_cleaned$classe)
+```
+
+The random forests model has a much higher accuracy of 99%. Only 1% of the test data is classified incorrectly. This is the out of sample error. We'll use this model to predict the 20 actual test cases.
